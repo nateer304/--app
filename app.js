@@ -1,6 +1,10 @@
 /* ===== 税务师刷题助手 核心逻辑（税法一 + 税法二） ===== */
 'use strict';
 
+/* ===== 版本号：每次更新题库/功能后递增，手机端刷新即自动更新 ===== */
+const APP_VERSION = '2026-08-16.2';
+console.log('税务师刷题助手 v' + APP_VERSION);
+
 /* ---------- 数据与存储（按科目隔离） ---------- */
 const BANK = window.QUESTION_BANK || { questions: [] };
 const ALL_QUESTIONS = BANK.questions || [];

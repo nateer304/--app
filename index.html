@@ -313,11 +313,26 @@
 <script src="knowledge_cards.js"></script>
 <script src="app.js"></script>
 <script>
-/* PWA Service Worker 注册（仅 HTTPS/localhost 生效，局域网 http 会静默跳过） */
+/* PWA Service Worker 注册（仅 HTTPS/localhost 生效，局域网 http 会静默跳过）
+ * 自动更新：检测到新版本 SW 时，通知新 SW 接管并刷新页面 */
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
     navigator.serviceWorker.register('./sw.js').then(reg => {
       console.log('SW 注册成功, scope:', reg.scope);
+      // 有更新等待时自动接管
+      reg.addEventListener('updatefound', () => {
+        const newWorker = reg.installing;
+        if (!newWorker) return;
+        newWorker.addEventListener('statechange', () => {
+          if (newWorker.state === 'installed' && navigator.serviceWorker.controller) {
+            // 新版本已就绪 → 提示并刷新（用户正在使用时延迟到下次打开）
+            if (confirm('发现新版本题库，是否立即刷新？\n（点确定立即更新，点取消下次打开自动更新）')) {
+              newWorker.postMessage('SKIP_WAITING');
+              setTimeout(() => window.location.reload(), 300);
+            }
+          }
+        });
+      });
     }).catch(err => {
       console.log('SW 注册失败（HTTP 环境属正常，仅托管 HTTPS 下启用离线）:', err);
     });
