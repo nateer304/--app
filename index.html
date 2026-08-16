@@ -1,0 +1,328 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>税务师刷题助手 · 2026</title>
+<link rel="manifest" href="manifest.json">
+<meta name="theme-color" content="#2563eb">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="税务师刷题">
+<link rel="apple-touch-icon" href="icon-192.png">
+<link rel="icon" type="image/png" href="icon-192.png">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div id="app">
+  <!-- ===== 顶部导航 ===== -->
+  <header class="topbar">
+    <div class="topbar-inner">
+      <div class="logo" onclick="showHome()">
+        <span class="logo-icon">税</span>
+        <span class="logo-text" id="logoText">税法(一)刷题助手 <em>2026</em></span>
+      </div>
+      <div class="subject-switch">
+        <button class="subject-btn active" data-subject="税法一" onclick="setSubject('税法一')">税法(一)</button>
+        <button class="subject-btn" data-subject="税法二" onclick="setSubject('税法二')">税法(二)</button>
+      </div>
+      <nav class="nav">
+        <button class="nav-btn" data-page="home" onclick="showHome()">首页</button>
+        <button class="nav-btn" data-page="chapter" onclick="showChapterList()">章节练习</button>
+        <button class="nav-btn" data-page="random" onclick="showRandomSetup()">随机刷题</button>
+        <button class="nav-btn" data-page="exam" onclick="showExamSetup()">模拟考试</button>
+        <button class="nav-btn" data-page="search" onclick="showSearch()">🔍 搜题</button>
+        <button class="nav-btn" data-page="card" onclick="showCardList()">知识卡</button>
+        <button class="nav-btn" data-page="wrong" onclick="showWrongList()">错题库 <span id="wrongBadge" class="badge"></span></button>
+        <button class="nav-btn" data-page="favorite" onclick="showFavoriteList()">收藏 <span id="favBadge" class="badge"></span></button>
+        <button class="nav-btn" data-page="stats" onclick="showStats()">学习统计</button>
+      </nav>
+    </div>
+  </header>
+
+  <!-- ===== 首页 ===== -->
+  <section id="page-home" class="page">
+    <div class="hero">
+      <h1 id="heroTitle">2026 税务师《税法（一）》</h1>
+      <p class="hero-sub">基于 2026 年考试大纲 · 当前科目题库 <b id="heroTotal">0</b> 题 · 本地离线使用 · 错题自动收录</p>
+      <div class="hero-actions">
+        <button class="btn btn-primary btn-lg" onclick="showChapterList()">📖 章节练习</button>
+        <button class="btn btn-accent btn-lg" onclick="showRandomSetup()">🎲 随机刷题</button>
+        <button class="btn btn-outline btn-lg" onclick="showExamSetup()">📝 模拟考试</button>
+      </div>
+      <div class="hero-subject-hint">📌 顶部可切换「税法(一) / 税法(二)」科目，各科目的错题库、收藏、统计互相独立</div>
+    </div>
+    <div class="stat-cards" id="homeStats"></div>
+    <div id="todayReview" class="card review-card" style="margin-bottom:18px"></div>
+    <div class="home-grid">
+      <div class="card">
+        <h3>📊 章节题库分布</h3>
+        <div id="chapterBars"></div>
+      </div>
+      <div class="card">
+        <h3>📋 使用说明</h3>
+        <ul class="tips">
+          <li><b>科目切换</b>：顶部「税法(一)/税法(二)」按钮切换科目，题库、错题库、收藏、统计完全独立</li>
+          <li><b>今日复习</b>：间隔重复调度（按章节分值加权），到期错题+知识卡一键复习</li>
+          <li><b>知识卡</b>：三色笔记+高频考点手册提炼，卡片自评（忘了/模糊/记住/很熟）</li>
+          <li><b>章节练习</b>：按 2026 大纲逐章刷题（税法一 12 章 / 税法二 10 章），即时看解析</li>
+          <li><b>随机刷题</b>：全题库随机抽题，可指定章节与题型</li>
+          <li><b>模拟考试</b>：标准卷（单40+多20+计算+综合）或简版客观卷，计时交卷评分</li>
+          <li><b>错题库</b>：做错的题按到期时间重练，答对 2 次自动移出</li>
+          <li>所有数据保存在本地浏览器，无需联网</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===== 章节列表 ===== -->
+  <section id="page-chapter" class="page" style="display:none">
+    <div class="page-head">
+      <h2>章节练习</h2>
+      <p>选择章节开始练习，按 2026 考试大纲顺序</p>
+    </div>
+    <div class="chapter-grid" id="chapterGrid"></div>
+  </section>
+
+  <!-- ===== 随机刷题设置 ===== -->
+  <section id="page-random-setup" class="page" style="display:none">
+    <div class="page-head">
+      <h2>随机刷题</h2>
+      <p>从题库中随机抽题，即时反馈</p>
+    </div>
+    <div class="card setup-card">
+      <div class="form-row">
+        <label>章节范围</label>
+        <select id="randomChapter"><option value="all">全部章节</option></select>
+      </div>
+      <div class="form-row">
+        <label>题型</label>
+        <select id="randomType">
+          <option value="all">全部题型</option>
+          <option value="single">单选题</option>
+          <option value="multiple">多选题</option>
+          <option value="calc">计算题</option>
+          <option value="comprehensive">综合分析题</option>
+        </select>
+      </div>
+      <div class="form-row">
+        <label>题目数量</label>
+        <select id="randomCount">
+          <option value="10">10 题</option>
+          <option value="20" selected>20 题</option>
+          <option value="30">30 题</option>
+          <option value="50">50 题</option>
+        </select>
+      </div>
+      <button class="btn btn-primary btn-lg" onclick="startRandom()">开始刷题</button>
+    </div>
+  </section>
+
+  <!-- ===== 模拟考试设置 ===== -->
+  <section id="page-exam-setup" class="page" style="display:none">
+    <div class="page-head">
+      <h2>模拟考试</h2>
+      <p>按考试标准组卷，交卷后统一评分并展示解析</p>
+    </div>
+    <div class="exam-modes">
+      <div class="card exam-mode">
+        <h3>📝 标准卷</h3>
+        <ul>
+          <li>单项选择题 40 题（每题1.5分）</li>
+          <li>多项选择题 20 题（每题2分）</li>
+          <li>计算题 2 大题（每题4小问）</li>
+          <li>综合分析题 2 大题（每题6小问）</li>
+          <li>满分 140 分 · 时限 150 分钟</li>
+        </ul>
+        <button class="btn btn-primary" onclick="startExam('standard')">开始标准卷</button>
+      </div>
+      <div class="card exam-mode">
+        <h3>⚡ 简版客观卷</h3>
+        <ul>
+          <li>单项选择题 40 题（每题1.5分）</li>
+          <li>多项选择题 20 题（每题2分）</li>
+          <li>满分 100 分 · 时限 90 分钟</li>
+          <li>适合快速检验选择题掌握情况</li>
+        </ul>
+        <button class="btn btn-accent" onclick="startExam('simple')">开始简版卷</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===== 知识卡列表 ===== -->
+  <section id="page-card" class="page" style="display:none">
+    <div class="page-head">
+      <h2>📇 知识点卡 <span class="sub" id="cardCountText"></span></h2>
+      <p>三色笔记 + 高频考点必背手册提炼 · 按章节分值加权间隔复习</p>
+      <div class="head-actions">
+        <button class="btn btn-accent btn-sm" onclick="startCardReview(CARDS.filter(c => !cardsStore[cardKey(c)]).map(c => cardKey(c)))">学新卡</button>
+        <button class="btn btn-outline btn-sm" onclick="startCardReview(CARDS.filter(c => {const s=cardsStore[cardKey(c)]; return s && s.due && s.due <= Date.now();}).map(c => cardKey(c)))">复习到期</button>
+      </div>
+    </div>
+    <div id="cardList" class="card-list"></div>
+  </section>
+
+  <!-- ===== 知识卡复习 ===== -->
+  <section id="page-card-quiz" class="page" style="display:none">
+    <div class="quiz-head">
+      <button class="btn btn-outline btn-sm" onclick="showCardList()">← 返回</button>
+      <div class="quiz-title">📇 知识卡复习</div>
+      <div class="quiz-progress">
+        <span id="cardProgress">0 / 0</span>
+      </div>
+    </div>
+    <div class="card-quiz-body">
+      <div class="card-meta" id="cardType"></div>
+      <div class="card-title" id="cardTitle"></div>
+      <div class="card-content" id="cardBody"></div>
+      <div class="card-hint" id="cardHint"></div>
+      <div class="card-actions">
+        <button class="btn btn-primary btn-lg" id="cardRevealBtn" onclick="revealCard()">👁 显示内容</button>
+        <div class="card-grades" id="cardGradeBtns" style="display:none">
+          <button class="btn btn-danger" onclick="gradeCardClick('again')">😵 忘了</button>
+          <button class="btn btn-outline" onclick="gradeCardClick('hard')">🤔 模糊</button>
+          <button class="btn btn-accent" onclick="gradeCardClick('good')">🙂 记住了</button>
+          <button class="btn btn-primary" onclick="gradeCardClick('easy')">😎 很熟</button>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===== 搜题 ===== -->
+  <section id="page-search" class="page" style="display:none">
+    <div class="page-head">
+      <h2>题目搜索</h2>
+      <p>按关键词搜索题干、选项或解析内容</p>
+    </div>
+    <div class="card search-box">
+      <div class="search-input-row">
+        <input type="text" id="searchInput" placeholder="输入关键词，如：消费税 / 卷烟 / 计税价格…" onkeydown="if(event.key==='Enter')doSearch()">
+        <button class="btn btn-primary" onclick="doSearch()">搜索</button>
+      </div>
+      <div class="form-row">
+        <label>范围</label>
+        <select id="searchScope">
+          <option value="all">全部章节</option>
+        </select>
+      </div>
+      <div class="search-tips">
+        支持多关键词（用空格分隔，需同时满足）· 匹配题干/选项/解析
+      </div>
+    </div>
+    <div id="searchResult" class="search-result"></div>
+  </section>
+
+  <!-- ===== 收藏列表 ===== -->
+  <section id="page-favorite" class="page" style="display:none">
+    <div class="page-head">
+      <h2>我的收藏 <span class="sub" id="favCountText"></span></h2>
+      <div class="head-actions">
+        <button class="btn btn-primary btn-sm" onclick="startFavoriteReview()">刷全部收藏</button>
+      </div>
+    </div>
+    <div id="favList" class="wrong-list"></div>
+  </section>
+
+  <!-- ===== 错题库 ===== -->
+  <section id="page-wrong" class="page" style="display:none">
+    <div class="page-head">
+      <h2>错题库 <span class="sub" id="wrongCountText"></span></h2>
+      <div class="head-actions">
+        <button class="btn btn-outline btn-sm" onclick="startWrongReview()">重练全部错题</button>
+        <button class="btn btn-danger btn-sm" onclick="clearWrong()">清空错题库</button>
+      </div>
+    </div>
+    <div id="wrongList" class="wrong-list"></div>
+  </section>
+
+  <!-- ===== 学习统计 ===== -->
+  <section id="page-stats" class="page" style="display:none">
+    <div class="page-head"><h2>学习统计</h2></div>
+    <div class="stat-cards" id="statsCards"></div>
+    <div class="card"><h3>📈 各章节正确率</h3><div id="statsChapters"></div></div>
+  </section>
+
+  <!-- ===== 答题界面（练习/考试共用） ===== -->
+  <section id="page-quiz" class="page" style="display:none">
+    <div class="quiz-head">
+      <button class="btn btn-outline btn-sm" id="quizExitBtn" onclick="exitQuiz()">← 退出</button>
+      <div class="quiz-title" id="quizTitle"></div>
+      <div class="quiz-progress">
+        <span id="quizProgressText">0 / 0</span>
+        <div class="progress-bar"><div class="progress-fill" id="quizProgressFill"></div></div>
+      </div>
+      <div class="quiz-timer" id="quizTimer" style="display:none">⏱ 00:00</div>
+    </div>
+
+    <div class="quiz-body">
+      <!-- 计算/综合题材料 -->
+      <div class="material-box" id="materialBox" style="display:none">
+        <div class="material-title">【资料】</div>
+        <div class="material-text" id="materialText"></div>
+      </div>
+
+      <div class="question-card">
+        <div class="q-meta">
+          <span class="tag tag-type" id="qTypeTag"></span>
+          <span class="tag tag-chapter" id="qChapterTag"></span>
+          <span class="tag tag-source" id="qSourceTag"></span>
+        </div>
+        <div class="q-stem" id="qStem"></div>
+        <div class="q-options" id="qOptions"></div>
+        <div class="q-actions">
+          <button class="btn btn-primary" id="confirmBtn" onclick="confirmAnswer()">确认答案</button>
+          <button class="btn btn-outline" id="nextBtn" style="display:none" onclick="nextQuestion()">下一题 →</button>
+          <button class="btn btn-fav" id="favBtn" onclick="toggleFavorite()">☆ 收藏</button>
+        </div>
+        <div class="q-feedback" id="qFeedback" style="display:none"></div>
+      </div>
+    </div>
+
+    <!-- 考试答题卡 -->
+    <div class="answer-sheet" id="answerSheet" style="display:none">
+      <h4>答题卡</h4>
+      <div id="sheetGrid"></div>
+      <button class="btn btn-danger btn-lg" onclick="submitExam()">交卷并评分</button>
+    </div>
+  </section>
+
+  <!-- ===== 考试结果 ===== -->
+  <section id="page-result" class="page" style="display:none">
+    <div class="page-head"><h2 id="resultTitle"></h2></div>
+    <div id="resultSummary" class="result-summary"></div>
+    <div id="resultActions" class="result-actions">
+      <button class="btn btn-primary" onclick="reviewExam()">查看全部解析</button>
+      <button class="btn btn-outline" onclick="showExamSetup()">返回考试选择</button>
+    </div>
+    <div id="resultDetail"></div>
+  </section>
+
+  <!-- ===== 解析浏览（练习回顾模式） ===== -->
+  <section id="page-review" class="page" style="display:none">
+    <div class="page-head">
+      <h2 id="reviewTitle"></h2>
+      <div class="head-actions">
+        <button class="btn btn-outline btn-sm" onclick="backFromReview()">返回</button>
+      </div>
+    </div>
+    <div id="reviewList"></div>
+  </section>
+</div>
+
+<script src="questions.js"></script>
+<script src="knowledge_cards.js"></script>
+<script src="app.js"></script>
+<script>
+/* PWA Service Worker 注册（仅 HTTPS/localhost 生效，局域网 http 会静默跳过） */
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('./sw.js').then(reg => {
+      console.log('SW 注册成功, scope:', reg.scope);
+    }).catch(err => {
+      console.log('SW 注册失败（HTTP 环境属正常，仅托管 HTTPS 下启用离线）:', err);
+    });
+  });
+}
+</script>
+</body>
+</html>
