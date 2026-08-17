@@ -2,7 +2,7 @@
 'use strict';
 
 /* ===== 版本号：每次更新题库/功能后递增，手机端刷新即自动更新 ===== */
-const APP_VERSION = '2026-08-16.2';
+const APP_VERSION = '2026-08-16.3';
 console.log('税务师刷题助手 v' + APP_VERSION);
 
 /* ---------- 数据与存储（按科目隔离） ---------- */
@@ -16,8 +16,8 @@ let currentSubject = '税法一';   // '税法一' | '税法二'
 let QUESTIONS = [];             // 当前科目的题目
 let CARDS = [];                 // 当前科目的知识点卡
 let SYLLABUS = [];              // 当前科目章节
-let LS_WRONG, LS_STATS, LS_EXAM, LS_SETTINGS, LS_FAV, LS_PROGRESS, LS_CARDS;
-let wrongStore, statsStore, favStore, settings, cardsStore;
+let LS_WRONG, LS_STATS, LS_EXAM, LS_SETTINGS, LS_FAV, LS_PROGRESS, LS_CARDS, LS_ROUND;
+let wrongStore, statsStore, favStore, settings, cardsStore, roundStore;
 
 function subjectSuffix() { return currentSubject === '税法一' ? 's1' : 's2'; }
 
@@ -41,7 +41,33 @@ function loadStores() {
   statsStore = loadLS(LS_STATS, {});
   favStore = loadLS(LS_FAV, {});
   settings = loadLS(LS_SETTINGS, {});
+  LS_CARDS = 'tax_cards_' + subjectSuffix() + '_v1';
+  LS_ROUND = 'tax_round_' + subjectSuffix() + '_v1';
+  wrongStore = loadLS(LS_WRONG, {});
+  statsStore = loadLS(LS_STATS, {});
+  favStore = loadLS(LS_FAV, {});
+  settings = loadLS(LS_SETTINGS, {});
   cardsStore = loadLS(LS_CARDS, {});
+  roundStore = loadLS(LS_ROUND, {});   // {章节号: {round:N, done:[qid...]}}
+}
+
+/* ---------- 章节轮次刷题 ---------- */
+function getRoundState(ch) {
+  if (!roundStore[ch]) roundStore[ch] = { round: 1, done: [] };
+  return roundStore[ch];
+}
+function saveRound() {
+  saveLS(LS_ROUND, roundStore);
+}
+function markChapterDone(ch, qid) {
+  const st = getRoundState(ch);
+  if (!st.done.includes(qid)) st.done.push(qid);
+  saveRound();
+}
+function chapterUnseen(qs, ch) {
+  // 该章未刷过的题（本回合剔除 done）
+  const st = getRoundState(ch);
+  return qs.filter(q => !st.done.includes(q.id));
 }
 
 /* ---------- 间隔重复引擎（SM-2 简化版，按章节分值加权） ---------- */
@@ -269,24 +295,64 @@ let cardReviewQueue = [];  // 当前知识卡复习队列（card key 数组）
 let cardReviewIndex = 0;
 let cardRevealed = false;
 
+/* 知识卡：两级导航（税种列表 → 章内卡片） */
+let cardChapter = null;   // 当前浏览的章
+
 function showCardList() {
   showPage('page-card');
-  const rows = CARDS.map(c => {
+  cardChapter = null;
+  // 按章分组统计
+  const byCh = {};
+  for (const c of CARDS) {
+    const ch = c.chapter;
+    if (!byCh[ch]) byCh[ch] = { name: c.chapter_name, score: c.score, cards: [] };
+    byCh[ch].cards.push(c);
+  }
+  const rows = SYLLABUS.map(s => {
+    const g = byCh[s.ch];
+    if (!g) return '';
+    const dueCnt = g.cards.filter(c => {
+      const st = cardsStore[cardKey(c)];
+      return st && st.due && st.due <= Date.now();
+    }).length;
+    const newCnt = g.cards.filter(c => !cardsStore[cardKey(c)]).length;
+    return `<div class="card-chapter" onclick="showChapterCards(${s.ch})">
+      <div class="cc-name">第${s.ch}章 ${g.name}</div>
+      <div class="cc-meta">
+        <span>${g.cards.length} 卡</span>
+        ${g.score ? `<span class="tag tag-score">${g.score}分</span>` : ''}
+        ${dueCnt ? `<span class="tag tag-due">${dueCnt} 待复习</span>` : ''}
+        ${newCnt ? `<span class="tag tag-new">${newCnt} 新</span>` : ''}
+      </div>
+    </div>`;
+  }).filter(Boolean).join('');
+  document.getElementById('cardList').innerHTML = rows ||
+    '<div class="empty"><div class="big">📇</div>当前科目暂无知识卡</div>';
+}
+
+function showChapterCards(ch) {
+  showPage('page-card');
+  cardChapter = ch;
+  const chCards = CARDS.filter(c => c.chapter === ch);
+  const rows = chCards.map(c => {
     const st = cardsStore[cardKey(c)];
     const due = st && st.due;
     const overdue = due && due <= Date.now();
     const reps = st ? st.reps : 0;
-    const scoreTag = c.score > 0 ? `<span class="tag tag-score">${c.score}分</span>` : '';
     return `<div class="card-item" onclick="startSingleCard('${esc(cardKey(c))}')">
       <div class="ci-meta">
-        <span class="tag tag-chapter">第${c.chapter}章 ${c.chapter_name}</span>${scoreTag}
+        <span class="tag tag-chapter">第${c.chapter}章 ${c.chapter_name}</span>
         <span class="ci-state">${due ? (overdue ? '待复习' : reps + ' 次') : '未学习'}</span>
       </div>
       <div class="ci-title">${esc(c.kp)}</div>
+      <div class="ci-preview">${esc(c.content.slice(0, 40))}…</div>
     </div>`;
   }).join('');
-  document.getElementById('cardList').innerHTML = rows ||
-    '<div class="empty"><div class="big">📇</div>当前科目暂无知识卡</div>';
+  document.getElementById('cardList').innerHTML = `
+    <div class="card-back" onclick="showCardList()">← 返回税种列表</div>
+    <div class="card-ch-head">
+      <h3>第${ch}章 ${chCards[0] ? chCards[0].chapter_name : ''}（${chCards.length} 卡）</h3>
+    </div>` + rows;
 }
 
 function startSingleCard(key) {
@@ -389,10 +455,16 @@ function showChapterList() {
     const rateHtml = r === null ? '' : (r >= 60
       ? `<div class="ch-rate">正确率 ${r}%</div>`
       : `<div class="ch-rate warn">正确率 ${r}%（需加强）</div>`);
+    // 轮次进度
+    const rs = roundStore[s.ch];
+    const doneCnt = rs ? rs.done.length : 0;
+    const roundN = rs ? rs.round : 1;
+    const roundHtml = `<div class="ch-round">第${roundN}轮 · 本轮已刷 ${Math.min(doneCnt, n)}/${n}</div>`;
     return `<div class="chapter-item" onclick="startChapter(${s.ch})">
       <div class="ch-num">第${s.ch}章</div>
       <div class="ch-name">${s.name}</div>
       <div class="ch-count">题库 ${n} 题</div>
+      ${roundHtml}
       ${rateHtml}
     </div>`;
   }).join('');
@@ -402,10 +474,23 @@ function showChapterList() {
 function startChapter(ch) {
   // 恢复上次本章进度（校验章节一致）
   if (tryResumeProgress('chapter', p => p.chapter === ch)) return;
-  const qs = QUESTIONS.filter(q => (q.chapter || 0) === ch);
-  if (!qs.length) { alert('该章节暂无题目'); return; }
-  const list = groupSort(qs);
-  startQuiz({ mode: 'chapter', questions: list, title: `第${ch}章 ${chapterName(ch)} 练习`, chapter: ch });
+  const all = QUESTIONS.filter(q => (q.chapter || 0) === ch);
+  if (!all.length) { alert('该章节暂无题目'); return; }
+  let unseen = chapterUnseen(all, ch);
+  if (!unseen.length) {
+    // 本轮刷完 → 提示进入下一轮
+    const st = getRoundState(ch);
+    if (!confirm(`本章第 ${st.round} 轮已全部刷完（${st.done.length} 题）。\n开始第 ${st.round + 1} 轮复习？`)) {
+      showChapterList();
+      return;
+    }
+    st.round += 1;
+    st.done = [];
+    saveRound();
+    unseen = all;
+  }
+  const list = groupSort(unseen);
+  startQuiz({ mode: 'chapter', questions: list, title: `第${ch}章 ${chapterName(ch)} 练习（第${getRoundState(ch).round}轮）`, chapter: ch });
 }
 
 /* ---------- 随机刷题 ---------- */
@@ -702,6 +787,10 @@ function confirmAnswer() {
     recordStat(q.id, correct);
     recordWrongSrs(q.id, correct);   // 错题 SRS 调度（按章节分值加权）
     currentQuiz.wrongLog.push({ qid: q.id, correct });
+    // 章节练习：记录本轮已刷（做过即算）
+    if (currentQuiz.mode === 'chapter' && q.chapter) {
+      markChapterDone(q.chapter, q.id);
+    }
   }
   // 显示反馈
   showFeedback(q, true);
@@ -747,6 +836,15 @@ function nextQuestion() {
       clearProgress();
       const total = currentQuiz.questions.length;
       const right = currentQuiz.wrongLog.filter(w => w.correct).length;
+      // 章节练习：本轮刷完自动进入下一轮（已实时标记 done，这里只需推进轮次）
+      if (currentQuiz.mode === 'chapter' && currentQuiz.chapter) {
+        const st = getRoundState(currentQuiz.chapter);
+        st.round += 1;
+        st.done = [];
+        saveRound();
+        showResult(`第${st.round - 1}轮完成`, right, total, `第${st.round - 1}轮完成 · 已进入第${st.round}轮`);
+        return;
+      }
       showResult('', right, total);
     }
   }
@@ -1189,9 +1287,9 @@ function esc(s) {
 }
 
 /* ---------- 练习完成/结果展示（练习模式） ---------- */
-function showResult(msg, right, total) {
+function showResult(msg, right, total, title) {
   showPage('page-result');
-  document.getElementById('resultTitle').textContent = '练习完成';
+  document.getElementById('resultTitle').textContent = title || '练习完成';
   document.getElementById('resultSummary').innerHTML = `
     <div class="score ${right / total >= 0.8 ? 'pass' : 'fail'}">${Math.round(right / total * 100)}%</div>
     <div class="info">答对 ${right} / ${total} 题${right === total ? ' 🎉 全对！' : ''}</div>`;

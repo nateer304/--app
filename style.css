@@ -89,6 +89,18 @@ body {
 .tag-score { background: #ecfdf5; color: #059669; }
 
 .card-list { display: flex; flex-direction: column; gap: 10px; }
+.card-chapter {
+  background: var(--card); border: 1px solid var(--border); border-radius: 10px;
+  padding: 14px 16px; cursor: pointer; transition: all .15s;
+  display: flex; justify-content: space-between; align-items: center; gap: 10px;
+}
+.card-chapter:hover { border-color: var(--primary); box-shadow: 0 2px 8px rgba(0,0,0,.06); }
+.cc-name { font-size: 15px; font-weight: 600; }
+.cc-meta { display: flex; gap: 8px; align-items: center; font-size: 12.5px; color: var(--text-sub); flex-wrap: wrap; justify-content: flex-end; }
+.card-back { font-size: 13px; color: var(--primary); cursor: pointer; padding: 4px 0 10px; font-weight: 600; }
+.card-ch-head { margin-bottom: 10px; }
+.card-ch-head h3 { font-size: 16px; }
+.ci-preview { font-size: 12.5px; color: var(--text-sub); margin-top: 4px; line-height: 1.5; }
 .card-item {
   background: var(--card); border: 1px solid var(--border); border-radius: 10px;
   padding: 12px 16px; cursor: pointer; transition: all .15s;
@@ -165,6 +177,7 @@ body {
 .chapter-item .ch-num { font-size: 12px; color: var(--primary); font-weight: 600; }
 .chapter-item .ch-name { font-size: 16px; font-weight: 600; }
 .chapter-item .ch-count { color: var(--text-sub); font-size: 13px; }
+.chapter-item .ch-round { margin-top: 4px; font-size: 13px; color: var(--primary); font-weight: 500; }
 .chapter-item .ch-rate { margin-top: 4px; font-size: 13px; color: var(--success); }
 .chapter-item .ch-rate .warn { color: var(--warning); }
 
