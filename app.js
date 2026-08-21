@@ -2,7 +2,7 @@
 'use strict';
 
 /* ===== 版本号：每次更新题库/功能后递增，手机端刷新即自动更新 ===== */
-const APP_VERSION = '2026-08-16.3';
+const APP_VERSION = '2026-08-19.1';
 console.log('税务师刷题助手 v' + APP_VERSION);
 
 /* ---------- 数据与存储（按科目隔离） ---------- */
@@ -345,6 +345,7 @@ function showChapterCards(ch) {
         <span class="ci-state">${due ? (overdue ? '待复习' : reps + ' 次') : '未学习'}</span>
       </div>
       <div class="ci-title">${esc(c.kp)}</div>
+      ${cardTypeTags(c)}
       <div class="ci-preview">${esc(c.content.slice(0, 40))}…</div>
     </div>`;
   }).join('');
@@ -381,6 +382,7 @@ function renderCardQuestion() {
   document.getElementById('cardTitle').textContent = c.kp;
   document.getElementById('cardBody').textContent = c.content;
   document.getElementById('cardBody').style.display = 'none';
+  document.getElementById('cardExamples').innerHTML = '';   // 翻面后才渲染例题
   document.getElementById('cardRevealBtn').style.display = 'inline-block';
   document.getElementById('cardGradeBtns').style.display = 'none';
   document.getElementById('cardHint').textContent = '点击「显示内容」回忆后自评';
@@ -388,9 +390,41 @@ function renderCardQuestion() {
 
 function revealCard() {
   cardRevealed = true;
+  renderCardExamples(currentCard());
   document.getElementById('cardBody').style.display = 'block';
   document.getElementById('cardRevealBtn').style.display = 'none';
   document.getElementById('cardGradeBtns').style.display = 'flex';
+}
+
+// 例题附卡：知识点怎么考（真题示例，可折叠）
+function renderCardExamples(c) {
+  const el = document.getElementById('cardExamples');
+  const exs = (c && c.examples) || [];
+  if (!exs.length) { el.innerHTML = ''; return; }
+  const items = exs.map(e => `
+    <div class="ex-item">
+      <span class="ex-type">${esc(e.type)}</span>
+      <div class="ex-q">${esc(e.q)}</div>
+      ${e.answer ? `<div class="ex-ans">答案：${esc(e.answer)}</div>` : ''}
+      ${e.explain ? `<div class="ex-exp">解析：${esc(e.explain)}</div>` : ''}
+    </div>`).join('');
+  el.innerHTML = `<div class="card-examples">
+    <button class="examples-toggle" onclick="toggleExamples()">📝 怎么考 · ${exs.length} 道真题示例</button>
+    <div class="examples-list" id="examplesList" style="display:none">${items}</div>
+  </div>`;
+}
+
+function toggleExamples() {
+  const l = document.getElementById('examplesList');
+  if (l) l.style.display = l.style.display === 'none' ? 'block' : 'none';
+}
+
+// 卡片题型标签（从例题统计）
+function cardTypeTags(c) {
+  const exs = (c && c.examples) || [];
+  if (!exs.length) return '';
+  const tags = [...new Set(exs.map(e => e.type))].join(' · ');
+  return `<div class="ci-tags">题型：${esc(tags)}</div>`;
 }
 
 function gradeCardClick(grade) {

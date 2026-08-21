@@ -153,7 +153,7 @@
   <section id="page-card" class="page" style="display:none">
     <div class="page-head">
       <h2>📇 知识点卡 <span class="sub" id="cardCountText"></span></h2>
-      <p>三色笔记 + 高频考点必背手册提炼 · 按章节分值加权间隔复习</p>
+      <p>基础精讲讲义提炼 · 按章节分值加权间隔复习 · 含真题示例</p>
       <div class="head-actions">
         <button class="btn btn-accent btn-sm" onclick="startCardReview(CARDS.filter(c => !cardsStore[cardKey(c)]).map(c => cardKey(c)))">学新卡</button>
         <button class="btn btn-outline btn-sm" onclick="startCardReview(CARDS.filter(c => {const s=cardsStore[cardKey(c)]; return s && s.due && s.due <= Date.now();}).map(c => cardKey(c)))">复习到期</button>
@@ -175,6 +175,7 @@
       <div class="card-meta" id="cardType"></div>
       <div class="card-title" id="cardTitle"></div>
       <div class="card-content" id="cardBody"></div>
+      <div id="cardExamples"></div>
       <div class="card-hint" id="cardHint"></div>
       <div class="card-actions">
         <button class="btn btn-primary btn-lg" id="cardRevealBtn" onclick="revealCard()">👁 显示内容</button>
