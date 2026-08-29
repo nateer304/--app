@@ -2,7 +2,7 @@
 'use strict';
 
 /* ===== 版本号：每次更新题库/功能后递增，手机端刷新即自动更新 ===== */
-const APP_VERSION = '2026-08-19.3';
+const APP_VERSION = '2026-08-19.4';
 console.log('税务师刷题助手 v' + APP_VERSION);
 
 /* ---------- 数据与存储（按科目隔离） ---------- */
@@ -221,6 +221,7 @@ function showPage(id) {
 
 /* ---------- 首页 ---------- */
 function showHome() {
+  cardScrollRestore = null;   // 主动离开知识卡页时清掉待恢复位置
   showPage('page-home');
   const total = QUESTIONS.length;
   document.getElementById('heroTotal').textContent = total;
@@ -297,10 +298,16 @@ let cardRevealed = false;
 
 /* 知识卡：两级导航（税种列表 → 章内卡片） */
 let cardChapter = null;   // 当前浏览的章
+let cardScrollRestore = null;   // 进复习前的滚动位置 {ch, y}，返回时恢复
 
 function showCardList() {
   showPage('page-card');
   cardChapter = null;
+  // 返回知识卡页时恢复到进入复习前的位置
+  if (cardScrollRestore && cardScrollRestore.ch === null) {
+    window.scrollTo(0, cardScrollRestore.y);
+  }
+  cardScrollRestore = null;
   // 按章分组统计
   const byCh = {};
   for (const c of CARDS) {
@@ -333,6 +340,11 @@ function showCardList() {
 function showChapterCards(ch) {
   showPage('page-card');
   cardChapter = ch;
+  // 返回本章时恢复到进入复习前的位置（如最下面那行）
+  if (cardScrollRestore && cardScrollRestore.ch === ch) {
+    window.scrollTo(0, cardScrollRestore.y);
+  }
+  cardScrollRestore = null;
   const chCards = CARDS.filter(c => c.chapter === ch);
   const rows = chCards.map(c => {
     const st = cardsStore[cardKey(c)];
@@ -365,6 +377,10 @@ let cardFrom = 'list';   // 卡复习来源：'chapter'(章内卡列表) | 'list
 
 function startCardReview(keys, from) {
   cardFrom = from || 'list';
+  // 记录进入复习前的滚动位置（仅从知识卡页进入时）
+  if (document.getElementById('page-card').style.display !== 'none') {
+    cardScrollRestore = { ch: cardChapter, y: window.scrollY };
+  }
   cardReviewQueue = keys;
   cardReviewIndex = 0;
   cardRevealed = false;
@@ -451,9 +467,8 @@ function gradeCardClick(grade) {
 }
 
 function finishCardReview() {
-  const total = cardReviewQueue.length;
-  showResult(`知识卡复习完成（${total} 张）`, total, total);
-  document.getElementById('resultTitle').textContent = '知识卡复习完成';
+  // 复习完成 → 返回上一级（章内卡列表/知识卡页/首页），并恢复进入前的位置
+  cardQuizBack();
 }
 
 function renderChapterBars() {
