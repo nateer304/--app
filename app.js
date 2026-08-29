@@ -2,7 +2,7 @@
 'use strict';
 
 /* ===== 版本号：每次更新题库/功能后递增，手机端刷新即自动更新 ===== */
-const APP_VERSION = '2026-08-19.1';
+const APP_VERSION = '2026-08-19.3';
 console.log('税务师刷题助手 v' + APP_VERSION);
 
 /* ---------- 数据与存储（按科目隔离） ---------- */
@@ -286,7 +286,7 @@ function startDueReview() {
     startQuiz({ mode: 'wrong', questions: groupSort(wrongDue), title: `今日到期错题（${wrongDue.length} 题）` });
   } else {
     // 只有知识卡到期 → 知识卡复习
-    startCardReview(cardDue.map(c => cardKey(c)));
+    startCardReview(cardDue.map(c => cardKey(c)), 'home');
   }
 }
 
@@ -357,15 +357,26 @@ function showChapterCards(ch) {
 }
 
 function startSingleCard(key) {
-  startCardReview([key]);
+  cardFrom = 'chapter';
+  startCardReview([key], 'chapter');
 }
 
-function startCardReview(keys) {
+let cardFrom = 'list';   // 卡复习来源：'chapter'(章内卡列表) | 'list'(知识卡页) | 'home'(首页)
+
+function startCardReview(keys, from) {
+  cardFrom = from || 'list';
   cardReviewQueue = keys;
   cardReviewIndex = 0;
   cardRevealed = false;
   showPage('page-card-quiz');
   renderCardQuestion();
+}
+
+// 返回上一级（而不是固定回到最开始一级）
+function cardQuizBack() {
+  if (cardFrom === 'chapter' && cardChapter != null) { showChapterCards(cardChapter); return; }
+  if (cardFrom === 'home') { showHome(); return; }
+  showCardList();
 }
 
 function currentCard() {
@@ -753,17 +764,18 @@ function renderQuestion() {
   document.getElementById('qSourceTag').textContent = q.source || '';
 
   // 题干（大题内子问题显示组内序号）
-  let stem = q.stem;
+  let stem = (q.stem || '').replace(/\s*\n\s*/g, '');   // OCR 断行防御：显示时合并
   if (q.material && (q.type === 'calc' || q.type === 'comprehensive')) {
     // 子问题：前缀序号由题目本身带（1）（2）…
   }
   document.getElementById('qStem').textContent = stem;
 
-  // 选项
+  // 选项（跳过空选项，防御 OCR 丢字）
   const optBox = document.getElementById('qOptions');
   optBox.innerHTML = '';
   const saved = currentQuiz.answers[q.id] || [];
   for (const opt of q.options) {
+    if (!(opt.text || '').trim()) continue;
     const div = document.createElement('div');
     div.className = 'q-option' + (saved.includes(opt.key) ? ' selected' : '');
     div.dataset.key = opt.key;
