@@ -2,7 +2,7 @@
 'use strict';
 
 /* ===== 版本号：每次更新题库/功能后递增，手机端刷新即自动更新 ===== */
-const APP_VERSION = '2026-08-19.4';
+const APP_VERSION = '2026-10-11.2';
 console.log('税务师刷题助手 v' + APP_VERSION);
 
 /* ---------- 数据与存储（按科目隔离） ---------- */
@@ -18,6 +18,7 @@ let CARDS = [];                 // 当前科目的知识点卡
 let SYLLABUS = [];              // 当前科目章节
 let LS_WRONG, LS_STATS, LS_EXAM, LS_SETTINGS, LS_FAV, LS_PROGRESS, LS_CARDS, LS_ROUND;
 let wrongStore, statsStore, favStore, settings, cardsStore, roundStore;
+let LS_SETS, setsStore;   // 卷子库与卷子练习进度
 
 function subjectSuffix() { return currentSubject === '税法一' ? 's1' : 's2'; }
 
@@ -49,6 +50,9 @@ function loadStores() {
   settings = loadLS(LS_SETTINGS, {});
   cardsStore = loadLS(LS_CARDS, {});
   roundStore = loadLS(LS_ROUND, {});   // {章节号: {round:N, done:[qid...]}}
+  LS_SETS = 'tax_sets_' + subjectSuffix() + '_v1';
+  setsStore = loadLS(LS_SETS, { sets: [], progress: {} });
+  autoDetectSets();   // 自动识别题库来源中的卷子
 }
 
 /* ---------- 章节轮次刷题 ---------- */
@@ -106,21 +110,125 @@ function wrongInterval(count) {
   return 10;
 }
 
-/* 记录一次作答结果（错题 SRS） */
+/* ---------- 卷子库（按套试卷刷题） ---------- */
+const SET_KEYWORDS = ['必刷550','八套卷','模拟试卷','年真题','押题卷','万人模考','临门模考试卷','终极密卷','轻1模考','方银行','月考','密训卷'];
+function isSetSource(s) {
+  if (!s) return false;
+  return SET_KEYWORDS.some(k => s.includes(k));
+}
+
+/* 自动识别题库来源里的整套试卷/套卷（如「八套卷-模拟试卷-1」「押题卷一」） */
+function autoDetectSets() {
+  if (!setsStore.sets) setsStore.sets = [];
+  if (!setsStore.progress) setsStore.progress = {};
+  const sets = setsStore.sets;
+  let changed = false;
+  const known = new Set(sets.filter(x => x.type === 'book').map(x => x.source));
+  const candidates = new Map();
+  for (const q of ALL_QUESTIONS) {
+    if (q.subject !== currentSubject) continue;
+    if (!isSetSource(q.source)) continue;
+    if (known.has(q.source)) continue;
+    if (!candidates.has(q.source)) candidates.set(q.source, new Set());
+    candidates.get(q.source).add(q.id);
+  }
+  candidates.forEach((ids, source) => {
+    const san = String(source).replace(/[^\w\u4e00-\u9fa5]/g, '_');
+    sets.push({ id: 'book-' + san, name: source, type: 'book', source: source, count: ids.size, subject: currentSubject, auto: true });
+    changed = true;
+  });
+  // 题量同步：题库更新后刷新每套卷子的题数；题库里已消失的自动卷子移除
+  for (let i = sets.length - 1; i >= 0; i--) {
+    const s = sets[i];
+    if (s.subject !== currentSubject) continue;
+    if (s.type !== 'book') continue;
+    const n = setPool(s).length;
+    if (s.auto && n === 0) { sets.splice(i, 1); changed = true; continue; }
+    if (s.count !== n) { s.count = n; changed = true; }
+  }
+  if (changed) saveLS(LS_SETS, setsStore);
+}
+
+function getSetById(setId) {
+  return (setsStore.sets || []).find(s => s.id === setId) || null;
+}
+
+function qtypeLabel(t) {
+  return (!t || t === 'all') ? '全部题型' : (TYPE_NAMES[t] || t);
+}
+
+/* 一套卷子的题目池：按题库中的原卷顺序（单选→多选→计算→综合），可选题型过滤。
+   注意：不做 shuffle，保持试卷原始题序，便于按题号顺序刷完整套。 */
+function setPool(set, qtype) {
+  if (!set) return [];
+  let pool = QUESTIONS.filter(q => {
+    if (set.type === 'book') return q.source === set.source;
+    if (set.chapter && set.chapter !== 'all') return (q.chapter || 0) === Number(set.chapter);
+    return true;
+  });
+  const baseType = set.type === 'custom' ? set.qtype : 'all';
+  if (baseType && baseType !== 'all') pool = pool.filter(q => q.type === baseType);
+  if (qtype && qtype !== 'all') pool = pool.filter(q => q.type === qtype);
+  return pool;
+}
+
+/* 卷子练习进度：doneIds = 已做过的题目 id（去重，用于「继续未做」「完成度」） */
+function setProg(setId) {
+  if (!setsStore.progress) setsStore.progress = {};
+  const p = setsStore.progress[setId];
+  if (!p) return { done: 0, right: 0, wrong: 0, lastAt: 0, doneIds: [] };
+  if (!Array.isArray(p.doneIds)) p.doneIds = [];
+  return p;
+}
+
+/* 一套卷子的进度视图（按当前题型筛选题池计算） */
+function setProgressView(set, qtype) {
+  const pool = setPool(set, qtype);
+  const p = setProg(set.id);
+  const doneIds = new Set(p.doneIds);
+  const doneN = pool.filter(q => doneIds.has(q.id)).length;
+  const attempts = (p.right || 0) + (p.wrong || 0);
+  return {
+    pool: pool,
+    total: pool.length,
+    done: doneN,
+    left: pool.length - doneN,
+    attempts: attempts,
+    rate: attempts ? Math.round(p.right / attempts * 100) : 0,
+    wrong: pool.filter(q => wrongStore[q.id]).length,
+    pct: pool.length ? Math.round(doneN / pool.length * 100) : 0,
+  };
+}
+
+/* 记录一次卷子作答：qid 传入则登记为「已做」 */
+function recordSetStat(setId, qid, correct) {
+  if (!setsStore.progress) setsStore.progress = {};
+  const p = setProg(setId);
+  p.done = (p.done || 0) + 1;
+  if (correct) p.right = (p.right || 0) + 1; else p.wrong = (p.wrong || 0) + 1;
+  p.lastAt = Date.now();
+  if (qid && !p.doneIds.includes(qid)) p.doneIds.push(qid);
+  setsStore.progress[setId] = p;
+  saveLS(LS_SETS, setsStore);
+}
+
+function resetSetProgress(setId) {
+  if (!confirm('确定清空这套卷子的练习进度吗？（错题库、收藏不受影响）')) return;
+  if (setsStore.progress) delete setsStore.progress[setId];
+  saveLS(LS_SETS, setsStore);
+  const prog = getSavedProgress();
+  if (prog && prog.setId === setId) clearProgress();
+  renderSetDetail();
+}
+
+/* 记录一次作答结果（错题 SRS）
+ * 规则：做错 → 入错题库并排期；重练答对一次 → 立即移出错题库 */
 function recordWrongSrs(qid, correct) {
   const q = qById(qid);
   const ch = q ? q.chapter : 0;
   if (correct) {
-    // 答对：降级/移除（连续答对 2 次移出错题库）
-    if (wrongStore[qid]) {
-      wrongStore[qid].rightStreak = (wrongStore[qid].rightStreak || 0) + 1;
-      if (wrongStore[qid].rightStreak >= 2) {
-        delete wrongStore[qid];
-      } else {
-        wrongStore[qid].due = Date.now() + wrongInterval(Math.max(1, (wrongStore[qid].count || 1) - 1)) * 86400000 * chFactor(ch);
-        wrongStore[qid].lastWrong = Date.now();
-      }
-    }
+    // 答对一次即移出错题库
+    if (wrongStore[qid]) delete wrongStore[qid];
   } else {
     if (!wrongStore[qid]) wrongStore[qid] = { count: 0, due: 0 };
     wrongStore[qid].count = (wrongStore[qid].count || 0) + 1;
@@ -630,6 +738,8 @@ function saveProgress() {
       kind: currentQuiz.kind,
       title: currentQuiz.title,
       chapter: currentQuiz.chapter,
+      setId: currentQuiz.setId || null,
+      setExam: !!currentQuiz.setExam,
       index: currentQuiz.index,
       qids: currentQuiz.questions.map(q => q.id),
       answers: currentQuiz.answers,
@@ -671,11 +781,13 @@ function exitQuiz() {
     alert(`已保存进度（做到第 ${currentQuiz.index + 1}/${total} 题）。\n下次从「${currentQuiz.title}」入口可继续上次练习。`);
   }
   const m = currentQuiz.mode;
+  const sid = currentQuiz.setId;
   currentQuiz = null;
   if (m === 'wrong') showWrongList();
   else if (m === 'favorite') showFavoriteList();
   else if (m === 'search') showSearch();
   else if (m === 'chapter') showChapterList();
+  else if (m === 'set' && sid) showSetDetail(sid);
   else showHome();
 }
 
@@ -694,6 +806,7 @@ function tryResumeProgress(cfgKey, extraCheck) {
   startQuiz({
     mode: prog.mode, kind: prog.kind, questions: qs,
     index: prog.index, title: prog.title, chapter: prog.chapter,
+    setId: prog.setId || null, setExam: !!prog.setExam,
     answers: prog.answers || {}, revealed: prog.revealed || {},
   });
   return true;
@@ -703,6 +816,8 @@ function startQuiz(cfg) {
   currentQuiz = {
     mode: cfg.mode,
     kind: cfg.kind || null,
+    setId: cfg.setId || null,
+    setExam: cfg.setExam || false,
     questions: cfg.questions,
     index: cfg.index || 0,
     answers: {},       // qid -> [selected keys]
@@ -852,6 +967,8 @@ function confirmAnswer() {
     if (currentQuiz.mode === 'chapter' && q.chapter) {
       markChapterDone(q.chapter, q.id);
     }
+    // 卷子练习：记录单题进度（按题目 id 记「已做过」）
+    if (currentQuiz.setId) recordSetStat(currentQuiz.setId, q.id, correct);
   }
   // 显示反馈
   showFeedback(q, true);
@@ -906,9 +1023,228 @@ function nextQuestion() {
         showResult(`第${st.round - 1}轮完成`, right, total, `第${st.round - 1}轮完成 · 已进入第${st.round}轮`);
         return;
       }
+      if (currentQuiz.mode === 'set' && currentQuiz.setId) {
+        const set = getSetById(currentQuiz.setId);
+        const v = setProgressView(set, 'all');
+        const extra = v.left > 0
+          ? `本卷还剩 ${v.left} 题未做，回本卷详情点「继续练习」接着刷`
+          : '本卷题目已全部做过 🎉';
+        showResult('', right, total, (set ? set.name + ' · ' : '') + '本套练习完成', extra);
+        return;
+      }
       showResult('', right, total);
     }
   }
+}
+
+/* ---------- 我的卷子（按套试卷刷题） ---------- */
+let currentSetId = null;
+
+function showSetsList() {
+  showPage('page-sets');
+  currentSetId = null;
+  const box = document.getElementById('setSearchInput');
+  if (box) box.value = '';
+  renderSetsList();
+}
+
+function renderSetsList() {
+  const grid = document.getElementById('setsGrid');
+  const kwEl = document.getElementById('setSearchInput');
+  const kw = kwEl ? kwEl.value.trim().toLowerCase() : '';
+  let sets = (setsStore.sets || []).filter(s => s.subject === currentSubject);
+  if (kw) sets = sets.filter(s => (s.name + ' ' + (s.source || '')).toLowerCase().includes(kw));
+  const cntEl = document.getElementById('setCountText');
+  if (cntEl) cntEl.textContent = `（共 ${sets.length} 套）`;
+  if (!sets.length) {
+    grid.innerHTML = '<div class="empty"><div class="big">📚</div>' + (kw
+      ? '没有匹配「' + esc(kw) + '」的卷子'
+      : '还没有卷子<br>系统会自动识别题库来源中的整卷（八套卷 / 押题卷 / 历年真题等）<br>也可以点上方「➕ 创建新卷子」自己组卷');
+    return;
+  }
+  grid.innerHTML = sets.map(set => {
+    const v = setProgressView(set, 'all');
+    const srcLabel = set.type === 'book'
+      ? '来源：' + esc(set.source || set.name)
+      : '自定义 · ' + (set.chapter === 'all' ? '全部章节' : '第' + set.chapter + '章') + ' · ' + qtypeLabel(set.qtype);
+    return `<div class="set-card" onclick="openSet('${esc(set.id)}')">
+      <div class="set-header">
+        <div class="set-title">${esc(set.name)}</div>
+        <div class="set-source">${srcLabel}</div>
+      </div>
+      <div class="set-meta">
+        <span class="set-count">${v.total} 题</span>
+        <span class="set-progress">已做 ${v.done}/${v.total}</span>
+        ${v.attempts ? `<span class="set-rate">正确率 ${v.rate}%</span>` : ''}
+      </div>
+      <div class="set-progress-bar"><div class="set-progress-fill" style="width:${v.pct}%"></div></div>
+      <div class="set-actions" onclick="event.stopPropagation()">
+        <button class="btn btn-primary btn-sm" onclick="startSetPractice('${esc(set.id)}', {mode:'continue'})">${v.left ? '▶ 继续练习' : '🔄 再刷一遍'}</button>
+        <button class="btn btn-outline btn-sm" onclick="openSet('${esc(set.id)}')">套卷详情</button>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+/* 打开某一套卷子的详情页（题型/题量筛选、题目清单、各种练习入口） */
+function openSet(setId, opts) {
+  opts = opts || {};
+  const set = getSetById(setId);
+  if (!set) { showSetsList(); return; }
+  const rebuild = currentSetId !== setId || opts.reset;
+  currentSetId = setId;
+  showPage('page-set-detail');
+  if (rebuild) {
+    const pool = setPool(set);
+    const counts = { single: 0, multiple: 0, calc: 0, comprehensive: 0 };
+    pool.forEach(q => { counts[q.type] = (counts[q.type] || 0) + 1; });
+    document.getElementById('setTypeFilter').innerHTML = `<option value="all">全部题型（${pool.length}）</option>`
+      + ['single', 'multiple', 'calc', 'comprehensive'].filter(t => counts[t]).map(t =>
+        `<option value="${t}">${TYPE_NAMES[t]}（${counts[t]}）</option>`).join('');
+    document.getElementById('setCountLimit').value = pool.length > 200 ? '50' : '0';
+  }
+  renderSetDetail();
+}
+function showSetDetail(setId) {
+  if (!setId) { showSetsList(); return; }
+  openSet(setId);
+}
+
+function renderSetDetail() {
+  const set = getSetById(currentSetId);
+  if (!set) { showSetsList(); return; }
+  const qtype = document.getElementById('setTypeFilter').value || 'all';
+  const v = setProgressView(set, qtype);
+  document.getElementById('setDetailName').textContent = set.name;
+  document.getElementById('setDetailSub').textContent = (set.type === 'book' ? '来源：' + (set.source || '') : '自定义卷子')
+    + ' · 当前筛选：' + qtypeLabel(qtype) + `（${v.total} 题）`;
+  document.getElementById('setDetailStats').innerHTML = `
+    <div class="stat-card"><div class="num">${v.total}</div><div class="label">本卷题量</div></div>
+    <div class="stat-card green"><div class="num">${v.done}</div><div class="label">已做过</div></div>
+    <div class="stat-card orange"><div class="num">${v.attempts ? v.rate + '%' : '—'}</div><div class="label">正确率</div></div>
+    <div class="stat-card red"><div class="num">${v.left}</div><div class="label">未做</div></div>`;
+  document.getElementById('setProgressLine').innerHTML =
+    `<div class="set-progress-bar"><div class="set-progress-fill" style="width:${v.pct}%"></div></div>
+     <div class="set-progress-text">完成度 ${v.pct}%（已做 ${v.done} / ${v.total} 题，练习作答 ${v.attempts} 次）</div>`;
+  document.getElementById('setResumeBtn').textContent = v.left ? `▶ 继续练习（未做 ${v.left} 题）` : '🔄 本卷已做完 · 重刷一遍';
+  document.getElementById('setWrongBtn').textContent = `❌ 本卷错题重练（${v.wrong}）`;
+  document.getElementById('setDeleteBtn').style.display = set.type === 'custom' ? '' : 'none';
+  renderSetQuestionGrid(v, set);
+}
+
+function renderSetQuestionGrid(v, set) {
+  const box = document.getElementById('setQuestionGrid');
+  const MAX = 800;
+  const doneIds = new Set(setProg(set.id).doneIds);
+  const cells = v.pool.slice(0, MAX).map((q, i) => {
+    const isWrong = !!wrongStore[q.id];
+    const cls = 'set-q-cell' + (doneIds.has(q.id) ? ' done' : '') + (isWrong ? ' wrong' : '');
+    const tip = (TYPE_NAMES[q.type] || '') + ' · 第' + (q.chapter || '?') + '章' + (isWrong ? ' · 曾做错' : '');
+    return `<span class="${cls}" title="${esc(tip)}" onclick="jumpToSetQuestion(${i})">${i + 1}</span>`;
+  }).join('');
+  box.innerHTML = cells + (v.pool.length > MAX
+    ? `<div class="set-q-more">…本卷共 ${v.pool.length} 题，清单只显示前 ${MAX} 题（可用上方题型筛选缩小范围）</div>` : '');
+}
+
+function jumpToSetQuestion(index) {
+  startSetPractice(currentSetId, { mode: 'jump', index: index });
+}
+
+/* 开始按套刷题
+ * mode: continue=继续未做 | all=重做全部 | wrong=本卷错题 | exam=限时整卷 | jump=从第 N 题开始 */
+function startSetPractice(setId, opts) {
+  opts = opts || {};
+  const mode = opts.mode || 'continue';
+  const set = getSetById(setId);
+  if (!set) { alert('卷子不存在'); showSetsList(); return; }
+  const onDetail = document.getElementById('page-set-detail').style.display !== 'none';
+  const qtype = onDetail ? (document.getElementById('setTypeFilter').value || 'all') : 'all';
+  const v = setProgressView(set, qtype);
+  const pool = v.pool;
+  if (!pool.length) { alert('该卷子在当前筛选下没有题目'); return; }
+  const exam = mode === 'exam';
+  // 同一套卷子上次做到一半 → 询问是否续做
+  const prog = getSavedProgress();
+  if (mode === 'continue' && prog && prog.setId === setId && (prog.qids || []).length) {
+    if (tryResumeProgress('set')) return;
+  }
+  if (prog && prog.setId === setId) clearProgress();   // 换练习方式 → 放弃旧进度
+  const doneIds = new Set(setProg(setId).doneIds);
+  let list = pool.slice();
+  let label = '';
+  if (mode === 'continue') {
+    list = list.filter(q => !doneIds.has(q.id));
+    if (!list.length) {
+      if (!confirm('本卷当前筛选的题目已全部做过。\n「确定」重刷一遍全部题目，「取消」返回卷子详情。')) return;
+      list = pool.slice();
+      label = ' · 重刷';
+    } else label = ' · 继续未做';
+  } else if (mode === 'all') {
+    label = ' · 全部题目';
+  } else if (mode === 'wrong') {
+    list = list.filter(q => wrongStore[q.id]);
+    if (!list.length) { alert('本卷暂无错题记录（做错过的题会自动进错题库）'); return; }
+    label = ' · 错题重练';
+  }
+  // 题量限制（详情页选择；「全部」为 0）
+  const limit = onDetail ? (parseInt(document.getElementById('setCountLimit').value, 10) || 0) : 0;
+  if (mode !== 'jump' && limit > 0) list = list.slice(0, limit);
+  if (!list.length) { alert('没有可练习的题目'); return; }
+  const startIndex = mode === 'jump' ? Math.max(0, Math.min(opts.index || 0, pool.length - 1)) : 0;
+  const baseTitle = set.name + (qtype === 'all' ? '' : ' · ' + qtypeLabel(qtype)) + (exam ? '' : label);
+  startQuiz({
+    mode: 'set', setId: setId, questions: list, index: startIndex,
+    title: exam ? '限时考试 · ' + baseTitle : baseTitle,
+    exam: exam, setExam: exam,
+    durationMin: exam ? Math.min(180, Math.max(20, Math.round(list.length * 1.2))) : 0,
+    fullScore: 100,
+  });
+}
+
+function showCreateSet() {
+  showPage('page-set-create');
+  renderCreateSetFilters();
+  updateSetPreview();
+}
+function renderCreateSetFilters() {
+  const sel = document.getElementById('newSetChapter');
+  sel.innerHTML = '<option value="all">全部章节</option>' + SYLLABUS.map(s =>
+    '<option value="' + s.ch + '">第' + s.ch + '章 ' + s.name + '</option>').join('');
+}
+function updateSetPreview() {
+  const name = document.getElementById('newSetName').value.trim();
+  if (!name) { document.getElementById('newSetPreview').textContent = '0 题'; return; }
+  let pool = QUESTIONS.slice();
+  const ch = document.getElementById('newSetChapter').value;
+  const tp = document.getElementById('newSetType').value;
+  if (ch !== 'all') pool = pool.filter(q => (q.chapter || 0) === Number(ch));
+  if (tp !== 'all') pool = pool.filter(q => q.type === tp);
+  document.getElementById('newSetPreview').textContent = pool.length + ' 题';
+}
+function confirmCreateSet() {
+  const name = document.getElementById('newSetName').value.trim();
+  const ch = document.getElementById('newSetChapter').value;
+  const tp = document.getElementById('newSetType').value;
+  if (!name) { alert('请输入卷子名称'); return; }
+  let pool = QUESTIONS.slice();
+  if (ch !== 'all') pool = pool.filter(q => (q.chapter || 0) === Number(ch));
+  if (tp !== 'all') pool = pool.filter(q => q.type === tp);
+  if (!pool.length) { alert('根据所选条件找不到题目'); return; }
+  const setId = 'custom-' + ch + '-' + tp + '-' + Date.now();
+  setsStore.sets.push({ id: setId, name: name, type: 'custom', chapter: ch, qtype: tp, count: pool.length, subject: currentSubject, createdAt: Date.now() });
+  saveLS(LS_SETS, setsStore);
+  openSet(setId);
+  startSetPractice(setId, { mode: 'continue' });
+}
+function deleteSet(setId) {
+  const set = getSetById(setId);
+  if (!confirm('确定删除「' + (set ? set.name : '该卷子') + '」吗？练习进度会一并清空。')) return;
+  if (setsStore.progress) delete setsStore.progress[setId];
+  setsStore.sets = setsStore.sets.filter(s => s.id !== setId);
+  saveLS(LS_SETS, setsStore);
+  const prog = getSavedProgress();
+  if (prog && prog.setId === setId) clearProgress();
+  showSetsList();
 }
 
 /* ---------- 答题卡 ---------- */
@@ -933,8 +1269,8 @@ function submitExam() {
   const unanswered = currentQuiz.questions.filter(q => !(currentQuiz.answers[q.id] || []).length);
   if (unanswered.length && !confirm(`还有 ${unanswered.length} 题未作答，确定交卷吗？`)) return;
   clearInterval(currentQuiz.timerId);
-  // 评分
-  const scoring = currentQuiz.scoring;
+  // 评分（套卷考试不带 scoring 配置 → 用默认每题分值，最终按百分比计分）
+  const scoring = currentQuiz.scoring || {};
   const details = currentQuiz.questions.map((q, i) => {
     const saved = currentQuiz.answers[q.id] || [];
     const correct = checkAnswer(q, saved);
@@ -944,12 +1280,20 @@ function submitExam() {
   const totalPts = details.reduce((s, d) => s + d.pts, 0);
   const gotPts = details.filter(d => d.correct).reduce((s, d) => s + d.pts, 0);
   const fullScore = currentQuiz.fullScore || 100;
-  const score = Math.round(gotPts / totalPts * fullScore);
-  const pass = score >= (fullScore * 0.6);
+  let score, pass;
+  if (currentQuiz.setExam) {
+    // 卷子考试采用百分比计分
+    score = Math.round(details.filter(d => d.correct).length / details.length * 100);
+    pass = score >= 60;
+  } else {
+    score = Math.round(gotPts / totalPts * fullScore);
+    pass = score >= (fullScore * 0.6);
+  }
   // 记录统计与错题（考试也记录）
   for (const d of details) {
     recordStat(d.q.id, d.correct);
     recordWrongSrs(d.q.id, d.correct);
+    if (currentQuiz.setId) recordSetStat(currentQuiz.setId, d.q.id, d.correct);   // 整卷考试也计入套卷进度
   }
   currentQuiz.examResult = { details, score, gotPts, totalPts, pass, title: currentQuiz.title, fullScore };
   saveLS(LS_EXAM, { title: currentQuiz.title, score, time: new Date().toISOString() });
@@ -960,11 +1304,20 @@ function showExamResult() {
   const r = currentQuiz.examResult;
   showPage('page-result');
   document.getElementById('resultTitle').textContent = r.title;
+  const info = currentQuiz.setExam
+    ? `答对 ${r.details.filter(d => d.correct).length} / ${r.details.length} 题 · 正确率 ${r.score}% · ${r.pass ? '✅ 通过（≥60%）' : '❌ 未通过（60% 及格）'}`
+    : `满分 ${r.fullScore} 分 · 答对 ${r.details.filter(d => d.correct).length} / ${r.details.length} 题 · ${r.gotPts} / ${r.totalPts} 题面分 · ${r.pass ? '✅ 通过（≥' + Math.round(r.fullScore * 0.6) + '分）' : '❌ 未通过（' + Math.round(r.fullScore * 0.6) + '分及格）'}`;
   document.getElementById('resultSummary').innerHTML = `
-    <div class="score ${r.pass ? 'pass' : 'fail'}">${r.score} 分</div>
-    <div class="info">满分 ${r.fullScore} 分 · 答对 ${r.details.filter(d => d.correct).length} / ${r.details.length} 题 · ${r.gotPts} / ${r.totalPts} 题面分 · ${r.pass ? '✅ 通过（≥' + Math.round(r.fullScore * 0.6) + '分）' : '❌ 未通过（' + Math.round(r.fullScore * 0.6) + '分及格）'}</div>
+    <div class="score ${r.pass ? 'pass' : 'fail'}">${r.score} ${currentQuiz.setExam ? '%' : '分'}</div>
+    <div class="info">${info}</div>
     <div class="info">做错的题目已自动加入错题库</div>`;
   document.getElementById('resultDetail').innerHTML = '';
+  // 套卷考试：返回本卷详情；普通模拟考：返回考试选择
+  document.getElementById('resultActions').innerHTML = currentQuiz.setId
+    ? `<button class="btn btn-primary" onclick="reviewExam()">查看全部解析</button>
+       <button class="btn btn-outline" onclick="backFromResult()">返回本卷详情</button>`
+    : `<button class="btn btn-primary" onclick="reviewExam()">查看全部解析</button>
+       <button class="btn btn-outline" onclick="showExamSetup()">返回考试选择</button>`;
   updateWrongBadge();
 }
 
@@ -995,7 +1348,9 @@ function reviewExam() {
   document.getElementById('resultDetail').scrollIntoView({ behavior: 'smooth' });
 }
 
-/* ---------- 错题库 ---------- */
+/* ---------- 错题库（可按卷子区分） ---------- */
+let wrongFilter = 'all';   // 'all' | 'set:<setId>' | 'src:<来源文本>'
+
 function updateWrongBadge() {
   const n = Object.keys(wrongStore).length;
   const badge = document.getElementById('wrongBadge');
@@ -1003,15 +1358,69 @@ function updateWrongBadge() {
   badge.classList.toggle('show', n > 0);
 }
 
+/* 一道错题的「主归属卷子」：来源命中自动识别的整卷 → 该整卷；否则按来源文本分组 */
+function wrongSetOf(q) {
+  if (!q) return { key: 'src:__none__', name: '未标注来源' };
+  const bookSet = (setsStore.sets || []).find(s => s.type === 'book' && s.source === q.source);
+  if (bookSet) return { key: 'set:' + bookSet.id, name: bookSet.name, setId: bookSet.id };
+  const src = (q.source || '').trim();
+  return { key: 'src:' + (src || '__none__'), name: src || '未标注来源' };
+}
+
+/* 自定义卷子中含多少道错题（用于筛选下拉的可选项） */
+function customSetWrongCounts(ids) {
+  const out = new Map();
+  const customs = (setsStore.sets || []).filter(s => s.type === 'custom');
+  if (!customs.length) return out;
+  const idSet = new Set(ids);
+  for (const s of customs) {
+    let n = 0;
+    for (const q of setPool(s)) if (idSet.has(q.id)) n++;
+    if (n) out.set(s.id, n);
+  }
+  return out;
+}
+
+function wrongFilteredIds() {
+  const ids = Object.keys(wrongStore).filter(id => qById(id));
+  if (wrongFilter === 'all') return ids;
+  if (wrongFilter.indexOf('set:') === 0) {
+    const setId = wrongFilter.slice(4);
+    const set = getSetById(setId);
+    if (!set) return ids;
+    if (set.type === 'custom') {
+      const pool = new Set(setPool(set).map(q => q.id));
+      return ids.filter(id => pool.has(id));
+    }
+    return ids.filter(id => (qById(id) || {}).source === set.source);
+  }
+  if (wrongFilter.indexOf('src:') === 0) {
+    const src = wrongFilter.slice(4);
+    return ids.filter(id => ((qById(id) || {}).source || '').trim() === src || (src === '__none__' && !((qById(id) || {}).source || '').trim()));
+  }
+  return ids;
+}
+
+function wrongFilterName() {
+  if (wrongFilter === 'all') return '全部错题';
+  if (wrongFilter.indexOf('set:') === 0) {
+    const set = getSetById(wrongFilter.slice(4));
+    return set ? set.name : '全部错题';
+  }
+  const src = wrongFilter.slice(4);
+  return src === '__none__' ? '未标注来源' : src;
+}
+
+function wrongFilterChange(v) {
+  wrongFilter = v || 'all';
+  renderWrongList();
+}
+
 function addWrong(qid) {
   if (!wrongStore[qid]) wrongStore[qid] = { count: 1, lastWrong: Date.now() };
   else wrongStore[qid].count++;
   saveLS(LS_WRONG, wrongStore);
   updateWrongBadge();
-}
-
-function removeWrongIfMastered(qid) {
-  // 在练习/考试答对时：若错题数超过0且本次答对 → 保留但减少? 简化：答对不自动移除，由用户决定
 }
 
 function removeWrong(qid) {
@@ -1037,12 +1446,62 @@ function showWrongList() {
 
 function renderWrongList() {
   const list = document.getElementById('wrongList');
-  const ids = Object.keys(wrongStore);
   const now = Date.now();
-  const dueCount = ids.filter(id => !wrongStore[id].due || wrongStore[id].due <= now).length;
-  document.getElementById('wrongCountText').textContent = `（${ids.length} 题 · ${dueCount} 到期）`;
+  // 题库更新后可能残留已不存在的题目 → 顺手清理
+  let stale = false;
+  for (const id of Object.keys(wrongStore)) {
+    if (!qById(id)) { delete wrongStore[id]; stale = true; }
+  }
+  if (stale) saveLS(LS_WRONG, wrongStore);
+  const allIds = Object.keys(wrongStore);
+  const dueCount = allIds.filter(id => !wrongStore[id].due || wrongStore[id].due <= now).length;
+
+  // ---- 卷子分组（用于筛选下拉） ----
+  const groups = new Map();   // key -> {key,name,count}
+  for (const id of allIds) {
+    const g = wrongSetOf(qById(id));
+    if (!groups.has(g.key)) groups.set(g.key, { key: g.key, name: g.name, count: 0 });
+    groups.get(g.key).count++;
+  }
+  const groupList = [...groups.values()].sort((a, b) => b.count - a.count || a.name.localeCompare(b.name, 'zh'));
+  const customCounts = customSetWrongCounts(allIds);
+
+  const sel = document.getElementById('wrongSetFilter');
+  if (sel) {
+    sel.innerHTML = `<option value="all">全部错题（${allIds.length}）</option>`
+      + `<optgroup label="按卷子 / 来源">`
+      + groupList.map(g => `<option value="${esc(g.key)}">${esc(g.name)}（${g.count}）</option>`).join('')
+      + `</optgroup>`
+      + (customCounts.size
+        ? `<optgroup label="自定义卷子">` + [...customCounts.entries()].map(([sid, n]) => {
+            const s = getSetById(sid);
+            return `<option value="set:${esc(sid)}">${esc(s ? s.name : sid)}（${n}）</option>`;
+          }).join('') + `</optgroup>`
+        : '');
+    // 当前筛选失效（该卷错题已清零）→ 回落到全部
+    if (wrongFilter !== 'all' && !sel.querySelector(`option[value="${wrongFilter.replace(/"/g, '\\"')}"]`)) {
+      wrongFilter = 'all';
+    }
+    sel.value = wrongFilter;
+  }
+
+  const ids = wrongFilteredIds();
+  const txt = document.getElementById('wrongCountText');
+  if (txt) {
+    txt.textContent = wrongFilter === 'all'
+      ? `（${allIds.length} 题 · ${dueCount} 到期）`
+      : `（当前筛选 ${ids.length} / 共 ${allIds.length} 题 · 到期 ${ids.filter(id => !wrongStore[id].due || wrongStore[id].due <= now).length}）`;
+  }
+  const rvBtn = document.getElementById('wrongReviewBtn');
+  if (rvBtn) {
+    rvBtn.textContent = wrongFilter === 'all' ? `重练到期错题` : `重练「${wrongFilterName()}」（${ids.length}）`;
+  }
+  if (!allIds.length) {
+    list.innerHTML = `<div class="empty"><div class="big">🎉</div>错题库为空，继续保持！<br>做错的题会自动收录到这里，重练答对一次即移出</div>`;
+    return;
+  }
   if (!ids.length) {
-    list.innerHTML = `<div class="empty"><div class="big">🎉</div>错题库为空，继续保持！<br>做错的题目会自动收录到这里</div>`;
+    list.innerHTML = `<div class="empty"><div class="big">✅</div>「${esc(wrongFilterName())}」的错题已全部清空<br>可在上方切换回「全部错题」</div>`;
     return;
   }
   // 到期优先，其次最近错误时间
@@ -1054,18 +1513,18 @@ function renderWrongList() {
   });
   list.innerHTML = ids.map(id => {
     const q = qById(id);
-    if (!q) return '';
     const info = wrongStore[id];
     const date = new Date(info.lastWrong).toLocaleDateString();
     const isDue = !info.due || info.due <= now;
     const dueTag = isDue ? '<span class="tag tag-due">待复习</span>' : '';
+    const g = wrongSetOf(q);
     return `<div class="wrong-item">
       <div class="wi-info">
         <div class="wi-stem" onclick="startWrongReview(['${id}'])">${esc(q.stem)}</div>
         <div class="wi-meta">
+          <span class="tag tag-source">📄 ${esc(g.name)}</span>
           <span>${TYPE_NAMES[q.type]}</span>
           <span>第${q.chapter || '?'}章 ${chapterName(q.chapter)}</span>
-          <span>${q.source || ''}</span>
           <span>答错 ${info.count} 次</span>
           <span>最近 ${date}</span>
           ${dueTag}
@@ -1079,7 +1538,14 @@ function renderWrongList() {
   }).join('');
 }
 
-function startWrongReview(ids) {
+/* 重练「当前筛选」的错题（按卷子筛选时即本卷错题） */
+function startWrongReviewFiltered() {
+  const ids = wrongFilteredIds();
+  if (!ids.length) { alert('当前筛选下没有错题'); return; }
+  startWrongReview(ids, wrongFilter === 'all' ? null : wrongFilterName());
+}
+
+function startWrongReview(ids, titleName) {
   let list;
   if (ids && ids.length) {
     list = ids.map(id => qById(id)).filter(Boolean);
@@ -1095,13 +1561,14 @@ function startWrongReview(ids) {
     if (!list.length) {
       const all = Object.keys(wrongStore).map(id => qById(id)).filter(Boolean);
       if (all.length) {
-        alert('暂无到期错题，可到首页点「知识卡」复习，或从下方列表单题重练');
-        return;
+        if (!confirm(`暂无到期错题（还有 ${all.length} 题未到复习时间）。\n「确定」立即重练全部 ${all.length} 题，「取消」返回。`)) return;
+        list = all;
       }
     }
   }
   if (!list.length) { alert('错题库为空'); return; }
-  startQuiz({ mode: 'wrong', questions: groupSort(list), title: `错题重练（${list.length} 题）` });
+  const prefix = titleName ? `「${titleName}」错题重练` : '错题重练';
+  startQuiz({ mode: 'wrong', questions: groupSort(list), title: `${prefix}（${list.length} 题）` });
 }
 
 /* ---------- 收藏 ---------- */
@@ -1348,15 +1815,16 @@ function esc(s) {
 }
 
 /* ---------- 练习完成/结果展示（练习模式） ---------- */
-function showResult(msg, right, total, title) {
+function showResult(msg, right, total, title, extraInfo) {
   showPage('page-result');
   document.getElementById('resultTitle').textContent = title || '练习完成';
   document.getElementById('resultSummary').innerHTML = `
     <div class="score ${right / total >= 0.8 ? 'pass' : 'fail'}">${Math.round(right / total * 100)}%</div>
-    <div class="info">答对 ${right} / ${total} 题${right === total ? ' 🎉 全对！' : ''}</div>`;
+    <div class="info">答对 ${right} / ${total} 题${right === total ? ' 🎉 全对！' : ''}</div>
+    ${extraInfo ? `<div class="info">${esc(extraInfo)}</div>` : ''}`;
   document.getElementById('resultActions').innerHTML = `
     <button class="btn btn-primary" onclick="reviewPractice()">查看解析</button>
-    <button class="btn btn-outline" onclick="backFromResult()">返回</button>`;
+    <button class="btn btn-outline" onclick="backFromResult()">${currentQuiz && currentQuiz.setId ? '返回本卷详情' : '返回'}</button>`;
   document.getElementById('resultDetail').innerHTML = '';
   updateWrongBadge();
 }
@@ -1390,10 +1858,12 @@ function reviewPractice() {
 
 function backFromResult() {
   const m = currentQuiz ? currentQuiz.mode : null;
+  const sid = currentQuiz ? currentQuiz.setId : null;
   if (m === 'wrong') showWrongList();
   else if (m === 'favorite') showFavoriteList();
   else if (m === 'search') showSearch();
   else if (m === 'chapter') showChapterList();
+  else if (m === 'set' && sid) showSetDetail(sid);
   else showHome();
 }
 

@@ -32,6 +32,7 @@
         <button class="nav-btn" data-page="random" onclick="showRandomSetup()">随机刷题</button>
         <button class="nav-btn" data-page="exam" onclick="showExamSetup()">模拟考试</button>
         <button class="nav-btn" data-page="search" onclick="showSearch()">🔍 搜题</button>
+        <button class="nav-btn" data-page="sets" onclick="showSetsList()">📚 我的卷子</button>
         <button class="nav-btn" data-page="card" onclick="showCardList()">知识卡</button>
         <button class="nav-btn" data-page="wrong" onclick="showWrongList()">错题库 <span id="wrongBadge" class="badge"></span></button>
         <button class="nav-btn" data-page="favorite" onclick="showFavoriteList()">收藏 <span id="favBadge" class="badge"></span></button>
@@ -49,6 +50,7 @@
         <button class="btn btn-primary btn-lg" onclick="showChapterList()">📖 章节练习</button>
         <button class="btn btn-accent btn-lg" onclick="showRandomSetup()">🎲 随机刷题</button>
         <button class="btn btn-outline btn-lg" onclick="showExamSetup()">📝 模拟考试</button>
+        <button class="btn btn-primary btn-lg" onclick="showSetsList()">📚 我的卷子</button>
       </div>
       <div class="hero-subject-hint">📌 顶部可切换「税法(一) / 税法(二)」科目，各科目的错题库、收藏、统计互相独立</div>
     </div>
@@ -68,7 +70,8 @@
           <li><b>章节练习</b>：按 2026 大纲逐章刷题（税法一 12 章 / 税法二 10 章），即时看解析</li>
           <li><b>随机刷题</b>：全题库随机抽题，可指定章节与题型</li>
           <li><b>模拟考试</b>：标准卷（单40+多20+计算+综合）或简版客观卷，计时交卷评分</li>
-          <li><b>错题库</b>：做错的题按到期时间重练，答对 2 次自动移出</li>
+          <li><b>我的卷子</b>：按题库来源自动识别整套试卷（八套卷、押题卷、历年真题…），点开某一套可「继续练习 / 重做本卷 / 本卷错题重练 / 限时整卷考试」，逐题记录进度、随时续做</li>
+          <li><b>错题库</b>：做错的题自动收录，可按<b>卷子/来源</b>筛选并单独重练；<b>重练答对一次即移出</b></li>
           <li>所有数据保存在本地浏览器，无需联网</li>
         </ul>
       </div>
@@ -228,8 +231,10 @@
   <section id="page-wrong" class="page" style="display:none">
     <div class="page-head">
       <h2>错题库 <span class="sub" id="wrongCountText"></span></h2>
+      <p>做错的题自动收录 · <b>重练答对一次即移出</b> · 可按卷子/来源筛选</p>
       <div class="head-actions">
-        <button class="btn btn-outline btn-sm" onclick="startWrongReview()">重练全部错题</button>
+        <select id="wrongSetFilter" class="set-search" onchange="wrongFilterChange(this.value)"></select>
+        <button class="btn btn-primary btn-sm" id="wrongReviewBtn" onclick="startWrongReviewFiltered()">重练到期错题</button>
         <button class="btn btn-danger btn-sm" onclick="clearWrong()">清空错题库</button>
       </div>
     </div>
@@ -241,6 +246,93 @@
     <div class="page-head"><h2>学习统计</h2></div>
     <div class="stat-cards" id="statsCards"></div>
     <div class="card"><h3>📈 各章节正确率</h3><div id="statsChapters"></div></div>
+  </section>
+
+  <!-- ===== 我的卷子 ===== -->
+  <section id="page-sets" class="page" style="display:none">
+    <div class="page-head">
+      <h2>📚 我的卷子 <span class="sub" id="setCountText"></span></h2>
+      <p>按题库来源自动识别整套试卷（八套卷 / 押题卷 / 历年真题…）· 每科独立 · 支持按套练习、逐题进度与续做</p>
+      <div class="head-actions">
+        <input type="text" id="setSearchInput" class="set-search" placeholder="🔍 搜索卷子名称…" oninput="renderSetsList()">
+        <button class="btn btn-primary btn-sm" onclick="showCreateSet()">➕ 创建新卷子</button>
+      </div>
+    </div>
+    <div class="sets-grid" id="setsGrid"></div>
+  </section>
+
+  <!-- ===== 套卷详情（针对某一套试卷刷题） ===== -->
+  <section id="page-set-detail" class="page" style="display:none">
+    <div class="page-head">
+      <h2 id="setDetailName"></h2>
+      <p id="setDetailSub"></p>
+      <div class="head-actions">
+        <button class="btn btn-outline btn-sm" onclick="showSetsList()">← 返回我的卷子</button>
+      </div>
+    </div>
+    <div class="stat-cards" id="setDetailStats"></div>
+    <div class="card set-detail-card">
+      <div id="setProgressLine"></div>
+      <div class="form-row">
+        <label>题型</label>
+        <select id="setTypeFilter" onchange="renderSetDetail()"></select>
+      </div>
+      <div class="form-row">
+        <label>本次题量</label>
+        <select id="setCountLimit">
+          <option value="20">20 题</option>
+          <option value="50">50 题</option>
+          <option value="100">100 题</option>
+          <option value="0">全部题目</option>
+        </select>
+      </div>
+      <div class="set-detail-actions">
+        <button class="btn btn-primary" id="setResumeBtn" onclick="startSetPractice(currentSetId, {mode:'continue'})">▶ 继续练习</button>
+        <button class="btn btn-accent" onclick="startSetPractice(currentSetId, {mode:'all'})">🔄 重做本卷</button>
+        <button class="btn btn-outline" id="setWrongBtn" onclick="startSetPractice(currentSetId, {mode:'wrong'})">❌ 本卷错题重练</button>
+        <button class="btn btn-outline" onclick="startSetPractice(currentSetId, {mode:'exam'})">📝 限时整卷考试</button>
+        <button class="btn btn-outline" onclick="resetSetProgress(currentSetId)">♻ 重置本卷进度</button>
+        <button class="btn btn-outline" id="setDeleteBtn" style="display:none;color:var(--danger);border-color:var(--danger)" onclick="deleteSet(currentSetId)">🗑 删除本卷</button>
+      </div>
+      <div class="set-hint">💡 按题库原卷顺序出题（单选 → 多选 → 计算 → 综合）；做到一半退出会自动保存，下次「继续练习」接着刷。</div>
+    </div>
+    <div class="card">
+      <h3>题目清单 <span class="sub">灰=已做 · 红=曾做错 · 点击题号可直接跳到该题</span></h3>
+      <div id="setQuestionGrid" class="set-q-grid"></div>
+    </div>
+  </section>
+
+  <!-- ===== 创建卷子 ===== -->
+  <section id="page-set-create" class="page" style="display:none">
+    <div class="page-head">
+      <h2>创建新卷子</h2>
+      <button class="btn btn-outline btn-sm" onclick="showSetsList()">← 返回</button>
+    </div>
+    <div class="setup-card">
+      <div class="form-row">
+        <label>卷子名称</label>
+        <input type="text" id="newSetName" placeholder="如：增值税精选 / 冲刺模拟题">
+      </div>
+      <div class="form-row">
+        <label>章节范围</label>
+        <select id="newSetChapter"><option value="all">全部章节</option></select>
+      </div>
+      <div class="form-row">
+        <label>题型</label>
+        <select id="newSetType">
+          <option value="all">全部题型</option>
+          <option value="single">单选题</option>
+          <option value="multiple">多选题</option>
+          <option value="calc">计算题</option>
+          <option value="comprehensive">综合分析题</option>
+        </select>
+      </div>
+      <div class="form-row">
+        <label>预计题量</label>
+        <span id="newSetPreview" style="color:var(--primary);font-weight:600;">0 题</span>
+      </div>
+      <button class="btn btn-primary btn-lg" onclick="confirmCreateSet()">创建并开始练习</button>
+    </div>
   </section>
 
   <!-- ===== 答题界面（练习/考试共用） ===== -->
