@@ -2,7 +2,7 @@
 'use strict';
 
 /* ===== 版本号：每次更新题库/功能后递增，手机端刷新即自动更新 ===== */
-const APP_VERSION = '2026-10-11.2';
+const APP_VERSION = '2026-10-11.3';
 console.log('税务师刷题助手 v' + APP_VERSION);
 
 /* ---------- 数据与存储（按科目隔离） ---------- */
@@ -157,9 +157,10 @@ function qtypeLabel(t) {
   return (!t || t === 'all') ? '全部题型' : (TYPE_NAMES[t] || t);
 }
 
-/* 一套卷子的题目池：按题库中的原卷顺序（单选→多选→计算→综合），可选题型过滤。
+/* 一套卷子的题目池：按题库中的原卷顺序（单选→多选→计算→综合）。
+   qtype：题型过滤；chapters：税种/章节多选（空/不传＝全部章节）。
    注意：不做 shuffle，保持试卷原始题序，便于按题号顺序刷完整套。 */
-function setPool(set, qtype) {
+function setPool(set, qtype, chapters) {
   if (!set) return [];
   let pool = QUESTIONS.filter(q => {
     if (set.type === 'book') return q.source === set.source;
@@ -169,7 +170,31 @@ function setPool(set, qtype) {
   const baseType = set.type === 'custom' ? set.qtype : 'all';
   if (baseType && baseType !== 'all') pool = pool.filter(q => q.type === baseType);
   if (qtype && qtype !== 'all') pool = pool.filter(q => q.type === qtype);
+  if (chapters && chapters.length) {
+    const want = new Set(chapters.map(Number));
+    pool = pool.filter(q => want.has(Number(q.chapter || 0)));
+  }
   return pool;
+}
+
+/* 一套卷子里出现的税种/章节（用于多选 chips），按章节号升序 */
+function setChapters(set, qtype) {
+  const pool = setPool(set, qtype);
+  const map = new Map();
+  for (const q of pool) {
+    const ch = Number(q.chapter || 0);
+    if (!map.has(ch)) map.set(ch, { ch: ch, name: ch ? chapterName(ch) : '未分章/综合', count: 0 });
+    map.get(ch).count++;
+  }
+  return [...map.values()].sort((a, b) => (a.ch || 99) - (b.ch || 99));
+}
+
+/* 税种选择的可读标签（用于练习标题） */
+function chapterSelLabel(chapters) {
+  if (!chapters || !chapters.length) return '';
+  const names = chapters.map(ch => Number(ch) ? chapterName(Number(ch)) : '未分章');
+  if (names.length <= 2) return names.join(' + ');
+  return names.length + ' 个税种';
 }
 
 /* 卷子练习进度：doneIds = 已做过的题目 id（去重，用于「继续未做」「完成度」） */
@@ -181,9 +206,9 @@ function setProg(setId) {
   return p;
 }
 
-/* 一套卷子的进度视图（按当前题型筛选题池计算） */
-function setProgressView(set, qtype) {
-  const pool = setPool(set, qtype);
+/* 一套卷子的进度视图（按当前「税种 + 题型」筛选题池计算） */
+function setProgressView(set, qtype, chapters) {
+  const pool = setPool(set, qtype, chapters);
   const p = setProg(set.id);
   const doneIds = new Set(p.doneIds);
   const doneN = pool.filter(q => doneIds.has(q.id)).length;
@@ -1039,6 +1064,7 @@ function nextQuestion() {
 
 /* ---------- 我的卷子（按套试卷刷题） ---------- */
 let currentSetId = null;
+let setChapterSel = [];    // 当前卷子选中的税种/章节（空数组 = 全部）
 
 function showSetsList() {
   showPage('page-sets');
@@ -1086,13 +1112,14 @@ function renderSetsList() {
   }).join('');
 }
 
-/* 打开某一套卷子的详情页（题型/题量筛选、题目清单、各种练习入口） */
+/* 打开某一套卷子的详情页（税种/题型/题量筛选、题目清单、各种练习入口） */
 function openSet(setId, opts) {
   opts = opts || {};
   const set = getSetById(setId);
   if (!set) { showSetsList(); return; }
   const rebuild = currentSetId !== setId || opts.reset;
   currentSetId = setId;
+  if (rebuild) setChapterSel = [];   // 换卷子 → 税种选择重置为「全部」
   showPage('page-set-detail');
   if (rebuild) {
     const pool = setPool(set);
@@ -1114,22 +1141,56 @@ function renderSetDetail() {
   const set = getSetById(currentSetId);
   if (!set) { showSetsList(); return; }
   const qtype = document.getElementById('setTypeFilter').value || 'all';
-  const v = setProgressView(set, qtype);
+  // 题型变化后，清掉已不存在的税种选择
+  const avail = setChapters(set, qtype).map(c => c.ch);
+  setChapterSel = setChapterSel.filter(ch => avail.includes(Number(ch)));
+  const v = setProgressView(set, qtype, setChapterSel);
+  const selLabel = setChapterSel.length ? chapterSelLabel(setChapterSel) : '全部税种';
   document.getElementById('setDetailName').textContent = set.name;
   document.getElementById('setDetailSub').textContent = (set.type === 'book' ? '来源：' + (set.source || '') : '自定义卷子')
-    + ' · 当前筛选：' + qtypeLabel(qtype) + `（${v.total} 题）`;
+    + ` · 当前筛选：${selLabel} · ${qtypeLabel(qtype)}（${v.total} 题）`;
+  renderSetChapterChips(set, qtype);
   document.getElementById('setDetailStats').innerHTML = `
-    <div class="stat-card"><div class="num">${v.total}</div><div class="label">本卷题量</div></div>
+    <div class="stat-card"><div class="num">${v.total}</div><div class="label">当前范围题量</div></div>
     <div class="stat-card green"><div class="num">${v.done}</div><div class="label">已做过</div></div>
     <div class="stat-card orange"><div class="num">${v.attempts ? v.rate + '%' : '—'}</div><div class="label">正确率</div></div>
     <div class="stat-card red"><div class="num">${v.left}</div><div class="label">未做</div></div>`;
   document.getElementById('setProgressLine').innerHTML =
     `<div class="set-progress-bar"><div class="set-progress-fill" style="width:${v.pct}%"></div></div>
-     <div class="set-progress-text">完成度 ${v.pct}%（已做 ${v.done} / ${v.total} 题，练习作答 ${v.attempts} 次）</div>`;
-  document.getElementById('setResumeBtn').textContent = v.left ? `▶ 继续练习（未做 ${v.left} 题）` : '🔄 本卷已做完 · 重刷一遍';
+     <div class="set-progress-text">当前范围完成度 ${v.pct}%（已做 ${v.done} / ${v.total} 题，练习作答 ${v.attempts} 次）</div>`;
+  document.getElementById('setResumeBtn').textContent = v.left ? `▶ 继续练习（未做 ${v.left} 题）` : '🔄 当前范围已做完 · 重刷一遍';
   document.getElementById('setWrongBtn').textContent = `❌ 本卷错题重练（${v.wrong}）`;
   document.getElementById('setDeleteBtn').style.display = set.type === 'custom' ? '' : 'none';
   renderSetQuestionGrid(v, set);
+}
+
+/* 税种 / 章节多选 chips（自由组合，如「必刷550题」只刷增值税） */
+function renderSetChapterChips(set, qtype) {
+  const box = document.getElementById('setChapterChips');
+  if (!box) return;
+  const list = setChapters(set, qtype);
+  if (list.length <= 1) { box.innerHTML = '<span class="set-chips-empty">本卷题目未分章节</span>'; return; }
+  const allChip = `<span class="set-chip all ${setChapterSel.length ? '' : 'active'}" onclick="toggleSetChapter(0, true)">全部税种（${list.reduce((s, c) => s + c.count, 0)}）</span>`;
+  box.innerHTML = allChip + list.map(c => {
+    const on = setChapterSel.includes(c.ch);
+    const nm = c.ch ? '第' + c.ch + '章 ' + c.name : '未分章';
+    return `<span class="set-chip ${on ? 'active' : ''}" onclick="toggleSetChapter(${c.ch})">${esc(nm)}（${c.count}）</span>`;
+  }).join('');
+}
+
+/* ch=0 且 isAll 时清空选择（＝全部税种）；否则切换该章节 */
+function toggleSetChapter(ch, isAll) {
+  if (isAll) { setChapterSel = []; renderSetDetail(); return; }
+  ch = Number(ch);
+  setChapterSel = setChapterSel.includes(ch) ? setChapterSel.filter(x => x !== ch) : [...setChapterSel, ch];
+  renderSetDetail();
+}
+
+function setChapterSelAll() {
+  const set = getSetById(currentSetId);
+  if (!set) return;
+  setChapterSel = setChapters(set, document.getElementById('setTypeFilter').value || 'all').map(c => c.ch);
+  renderSetDetail();
 }
 
 function renderSetQuestionGrid(v, set) {
@@ -1143,7 +1204,7 @@ function renderSetQuestionGrid(v, set) {
     return `<span class="${cls}" title="${esc(tip)}" onclick="jumpToSetQuestion(${i})">${i + 1}</span>`;
   }).join('');
   box.innerHTML = cells + (v.pool.length > MAX
-    ? `<div class="set-q-more">…本卷共 ${v.pool.length} 题，清单只显示前 ${MAX} 题（可用上方题型筛选缩小范围）</div>` : '');
+    ? `<div class="set-q-more">…当前范围共 ${v.pool.length} 题，清单只显示前 ${MAX} 题（可用上方税种/题型缩小范围）</div>` : '');
 }
 
 function jumpToSetQuestion(index) {
@@ -1159,7 +1220,8 @@ function startSetPractice(setId, opts) {
   if (!set) { alert('卷子不存在'); showSetsList(); return; }
   const onDetail = document.getElementById('page-set-detail').style.display !== 'none';
   const qtype = onDetail ? (document.getElementById('setTypeFilter').value || 'all') : 'all';
-  const v = setProgressView(set, qtype);
+  const chapters = onDetail ? setChapterSel.slice() : [];
+  const v = setProgressView(set, qtype, chapters);
   const pool = v.pool;
   if (!pool.length) { alert('该卷子在当前筛选下没有题目'); return; }
   const exam = mode === 'exam';
@@ -1191,7 +1253,10 @@ function startSetPractice(setId, opts) {
   if (mode !== 'jump' && limit > 0) list = list.slice(0, limit);
   if (!list.length) { alert('没有可练习的题目'); return; }
   const startIndex = mode === 'jump' ? Math.max(0, Math.min(opts.index || 0, pool.length - 1)) : 0;
-  const baseTitle = set.name + (qtype === 'all' ? '' : ' · ' + qtypeLabel(qtype)) + (exam ? '' : label);
+  const baseTitle = set.name
+    + (chapters.length ? ' · ' + chapterSelLabel(chapters) : '')
+    + (qtype === 'all' ? '' : ' · ' + qtypeLabel(qtype))
+    + (exam ? '' : label);
   startQuiz({
     mode: 'set', setId: setId, questions: list, index: startIndex,
     title: exam ? '限时考试 · ' + baseTitle : baseTitle,

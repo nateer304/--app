@@ -273,6 +273,10 @@
     <div class="stat-cards" id="setDetailStats"></div>
     <div class="card set-detail-card">
       <div id="setProgressLine"></div>
+      <div class="set-filter-block">
+        <div class="set-filter-label">税种 / 章节 <span class="sub">可多选，不选＝全部（如「必刷550题」可只刷增值税）</span></div>
+        <div class="set-chips" id="setChapterChips"></div>
+      </div>
       <div class="form-row">
         <label>题型</label>
         <select id="setTypeFilter" onchange="renderSetDetail()"></select>
@@ -294,7 +298,7 @@
         <button class="btn btn-outline" onclick="resetSetProgress(currentSetId)">♻ 重置本卷进度</button>
         <button class="btn btn-outline" id="setDeleteBtn" style="display:none;color:var(--danger);border-color:var(--danger)" onclick="deleteSet(currentSetId)">🗑 删除本卷</button>
       </div>
-      <div class="set-hint">💡 按题库原卷顺序出题（单选 → 多选 → 计算 → 综合）；做到一半退出会自动保存，下次「继续练习」接着刷。</div>
+      <div class="set-hint">💡 先选<b>税种/章节</b>与<b>题型</b>（可多选税种，如只刷增值税），再选本次题量；按题库原卷顺序出题（单选 → 多选 → 计算 → 综合）；做到一半退出会自动保存，下次「继续练习」接着刷。</div>
     </div>
     <div class="card">
       <h3>题目清单 <span class="sub">灰=已做 · 红=曾做错 · 点击题号可直接跳到该题</span></h3>
